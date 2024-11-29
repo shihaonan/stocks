@@ -14,6 +14,7 @@ def get_trading_stocks():
     try:
         stock_info = ak.stock_info_a_code_name()
         main_board = stock_info[stock_info['code'].str.match('^(600|601|603|000|001|002)')]
+        print(f"获取到{len(main_board)}只股票")
         return main_board['code'].tolist()
     except Exception as e:
         print(f"获取股票列表失败: {e}")
@@ -149,38 +150,85 @@ def get_trading_dates(start_date, end_date, max_retries=3):
     return []
 
 def process_single_stock(stock, date, stock_data_batch, financial_data_batch):
+    print(f"处理股票 {stock} 数据")
     """处理单个股票的逻辑"""
     try:
+        # 获取股票名称
+        stock_name = None
+        try:
+            stock_info_list = ak.stock_info_a_code_name()
+            stock_name = stock_info_list[stock_info_list['code'] == stock]['name'].values[0]
+        except:
+            stock_name = "未知"
+            
         # 从批量数据中获取股票信息
         if stock not in stock_data_batch.index:
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 无法获取股票数据")
             return None
             
         stock_info = stock_data_batch.loc[stock]
         market_cap = float(stock_info['总市值']) if '总市值' in stock_info else float('inf')
         
-        # 快速筛选
+        # 快速筛选市值
         if market_cap > 3000000000:  # 市值大于30亿
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 市值{market_cap:.2f}, 市值超过30亿")
             return None
             
-        # 从批量财务数据中获取信息
+        # 检查财务数据
         financial = financial_data_batch.get(stock)
-        if not financial or financial['revenue'] > 200000000 or financial['net_profit'] > 3000000:
+        if not financial:
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 无法获取财务数据")
+            return None
+        
+        if financial['revenue'] > 200000000:
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 营收{financial['revenue']:.2f}, 营收超过2亿")
+            return None
+            
+        if financial['net_profit'] > 3000000:
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 净利润{financial['net_profit']:.2f}, 净利润超过300万")
             return None
         
         # 获取大股东持股
         major_holder_ratio = get_major_holder(stock, date)
         if major_holder_ratio < 30:
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 大股东持股比例{major_holder_ratio:.2f}%, 持股比例低于30%")
             return None
         
         # 获取交易数据并检查条件
         trading_data = get_trading_data(stock, date)
         if trading_data is None or len(trading_data) < 5:
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 无法获取足够的交易数据")
             return None
         
-        if check_volume_conditions(trading_data) and not check_limit_up(trading_data):
+        if not check_volume_conditions(trading_data):
+            current_volume = trading_data['成交量'].iloc[-1]
+            last_volume = trading_data['成交量'].iloc[-2]
+            avg_volume = trading_data['成交量'].iloc[-5:].mean()
             with print_lock:
-                print(f"股票{stock}满足所有条件")
-            return stock
+                print(f"{stock}, {stock_name}, {date}, 当日成交量{current_volume:.0f}, 前日成交量{last_volume:.0f}, "
+                      f"5日均量{avg_volume:.0f}, 成交量条件不满足")
+            return None
+        
+        if check_limit_up(trading_data):
+            with print_lock:
+                print(f"{stock}, {stock_name}, {date}, 存在一字涨停")
+            return None
+        
+        # 满足所有条件
+        with print_lock:
+            print(f"★★★ {stock}, {stock_name}, {date} 满足所有条件 ★★★")
+            print(f"    市值: {market_cap:.2f}")
+            print(f"    营收: {financial['revenue']:.2f}")
+            print(f"    净利润: {financial['net_profit']:.2f}")
+            print(f"    大股东持股: {major_holder_ratio:.2f}%")
+        return stock
             
     except Exception as e:
         with print_lock:

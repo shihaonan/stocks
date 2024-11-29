@@ -14,7 +14,6 @@ def get_stock_basic_info(stock_code, date):
     """获取股票基础信息（市值等）"""
     try:
         # 使用 stock_zh_a_spot_em 接口获取实时行情数据
-        # 注意：这个接口只能获取当前数据，不能获取历史数据
         stock_info = ak.stock_zh_a_spot_em()
         stock_info = stock_info[stock_info['代码'] == stock_code]
         
@@ -118,10 +117,9 @@ def run_daily_selection(date):
     # for stock in stocks[:10]:  # 先测试前10只股票
     for stock in stocks:  
         try:
-            # 添加进度显示
-            print(f"正在处理: {stock}")
-            
-            time.sleep(1)  # 增加延时以避免被限制
+            # 添加进度显示，打印当前股票是正在处理的第几只股票，并显示总数
+            print(f"{date}  -   正在处理: {stock}，{stocks.index(stock) + 1}/{len(stocks)}")     
+            time.sleep(0.1)  # 增加延时以避免被限制
             
             # 获取基本面数据
             basic_info = get_stock_basic_info(stock, date)
@@ -129,13 +127,15 @@ def run_daily_selection(date):
                 print(f"无法获取{stock}的基本面数据")
                 continue
                 
-            market_cap = basic_info.get('total_mv', float('inf'))
-            if market_cap > 30:  # 市值大于30亿
+            market_cap = basic_info.get('total_mv',10000000000)
+            if market_cap > 3000000000:  # 市值大于30亿
+                print(f"股票{stock}市值{market_cap},过大")
                 continue
             
             # 获取大股东持股
             major_holder_ratio = get_major_holder(stock, date)
             if major_holder_ratio < 30:
+                print(f"股票{stock}大股东持股比例{major_holder_ratio},过小")
                 continue
             
             # 获取财务数据    
@@ -143,10 +143,11 @@ def run_daily_selection(date):
             if financial is None:
                 continue
                 
-            revenue = financial.get('revenue', float('inf'))
-            net_profit = financial.get('net_profit', float('inf'))
+            revenue = financial.get('revenue', 300000000)
+            net_profit = financial.get('net_profit', float('300000000'))
             
             if revenue > 200000000 or net_profit > 3000000:
+                print(f"股票{stock}营收{revenue},净利润{net_profit},过小")
                 continue
             
             # 获取交易数据
@@ -212,7 +213,7 @@ def save_results(results):
 if __name__ == "__main__":
     # 设置起止日期
     start_date = '2024-08-05'
-    end_date = '2024-08-30'
+    end_date = '2024-08-05'
     
     print(f"开始回溯选股 - 从 {start_date} 到 {end_date}")
     main(start_date, end_date)
