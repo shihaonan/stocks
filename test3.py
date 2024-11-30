@@ -26,7 +26,7 @@ def get_major_holder(stock_code, date):
     print(date)
     try:
         # 使用 stock_individual_info_em 接口获取主要股东数据
-        holders = ak.stock_gdfx_top_10_em(symbol=stock_code)
+        holders = ak.stock_gdfx_top_10_em(symbol=stock_code,date=date)
         if not holders.empty:
             # 获取第一大股东的持股比例
             print(holders)
@@ -35,7 +35,7 @@ def get_major_holder(stock_code, date):
     except Exception as e:
         print(f"获取股票{stock_code}股东信息失败: {e}")
 
-# get_major_holder('sz002693', '20241130')
+get_major_holder('sz002693', '20240827')
 
-stock_gdfx_top_10_em_df = ak.stock_gdfx_top_10_em(symbol="sz002693", date="20240828")
-print(stock_gdfx_top_10_em_df)
+# stock_gdfx_top_10_em_df = ak.stock_gdfx_top_10_em(symbol="sz002693", date="20240827")
+# print(stock_gdfx_top_10_em_df)
