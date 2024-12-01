@@ -10,50 +10,84 @@ def get_trading_stocks():
     main_board = stock_info[stock_info['code'].str.match('^(600|601|603|000|001|002)')]
     return main_board['code'].tolist()
 
-def get_stock_basic_info(stock_code, date):
-    """获取股票基础信息（市值等）"""
+#获取市值
+def market_value(stock_code, target_date):
     try:
-        # 使用 stock_zh_a_spot_em 接口获取实时行情数据
-        stock_info = ak.stock_zh_a_spot_em()
-        stock_info = stock_info[stock_info['代码'] == stock_code]
-        
-        if not stock_info.empty:
-            # 总市值通常以亿为单位
-            market_cap = float(stock_info['总市值'].values[0])
-            return {'total_mv': market_cap}
-        return None
+        # 获取股票的总股本信息
+        stock_info_df = ak.stock_individual_info_em(symbol=stock_code)
+        total_shares = stock_info_df.iloc[2, 1]
+
+        # 获取指定日期的收盘价
+        hangqing = ak.stock_zh_a_hist(symbol=stock_code, period="daily", start_date=target_date, end_date=target_date, adjust="")
+        closing_price = hangqing["收盘"].iloc[0]
+
+        # 计算市值
+        market_value = total_shares * closing_price
+        return market_value
+
     except Exception as e:
-        print(f"获取股票{stock_code}基础信息失败: {e}")
+        print(f"计算股票 {stock_code} 在 {target_date} 的市值时出现错误: {e}")
         return None
 
+def convert_to_float(value_str):
+    """将带有单位的字符串数据转换为浮点数"""
+    if '亿' in value_str:
+        return float(value_str.replace('亿', '')) * 100000000
+    elif '万' in value_str:
+        return float(value_str.replace('万', '')) * 10000
+    else:
+        return float(value_str)
+
 def get_financial_data(stock_code, date):
-    """获取财务数据"""
+    """获取营收和利润数据"""
     try:
-        # 使用 stock_financial_abstract_em 接口获取财务摘要数据
-        financial = ak.stock_financial_abstract_em(symbol=stock_code)
+        financial = ak.stock_financial_abstract_ths(symbol=stock_code, indicator="按报告期")
+
         if not financial.empty:
             # 获取最近的财务数据
             latest = financial.iloc[0]
+            revenue=convert_to_float(latest['营业总收入'])
+            net_profit= convert_to_float(latest['扣非净利润'])
             return {
-                'revenue': float(latest['营业收入']),
-                'net_profit': float(latest['净利润'])
+                'revenue': revenue,
+                'net_profit': net_profit
             }
+
     except Exception as e:
         print(f"获取股票{stock_code}财务数据失败: {e}")
     return None
 
-def get_major_holder(stock_code, date):
-    """获取第一大股东持股比例"""
-    try:
-        # 使用 stock_main_stock_holder_em 接口获取主要股东数据
-        holders = ak.stock_main_stock_holder_em(symbol=stock_code)
-        if not holders.empty:
-            # 获取第一大股东的持股比例
-            first_holder = holders.iloc[0]
-            return float(first_holder['持股比例'].replace('%', ''))
-    except Exception as e:
-        print(f"获取股票{stock_code}股东信息失败: {e}")
-    return 0
+def get_major_holder(stock_code, target_date):
+    """获取第一大股东持股比例，如果当天没有数据就往前查询"""
+    # 处理股票代码前缀
+    if stock_code.startswith(('sh', 'sz')):
+        formatted_code = stock_code
+    else:
+        # 上交所股票以6开头，深交所股票以0或3开头
+        if stock_code.startswith('6'):
+            formatted_code = 'sh' + stock_code
+        elif stock_code.startswith(('0', '3')):
+            formatted_code = 'sz' + stock_code
+        else:
+            print(f"无效的股票代码: {stock_code}")
+            return None
+    # 转换日期为datetime对象，方便进行日期计算
+    current_date = pd.to_datetime(target_date)
+    
+    # 最多往前查询100天
+    for _ in range(100):
+        try:
+            date_str = current_date.strftime('%Y%m%d')
+            holders = ak.stock_gdfx_top_10_em(symbol=formatted_code, date=date_str)
+            ratio = float(holders.iloc[0]['占总股本持股比例'])
+            return ratio
+        except:
+            # 有任何问题直接忽略，查询前一天
+            current_date = current_date - pd.Timedelta(days=1)
+            continue
+    
+    print(f"未能找到股票{formatted_code}的股东数据")
+    return None
 
 def get_trading_data(stock_code, date):
     """获取交易数据"""
@@ -102,7 +136,7 @@ def get_trading_dates(start_date, end_date):
         trading_calendar['trade_date'] = pd.to_datetime(trading_calendar['trade_date'])
         mask = (trading_calendar['trade_date'] >= pd.to_datetime(start_date)) & \
                (trading_calendar['trade_date'] <= pd.to_datetime(end_date))
-        return trading_calendar[mask]['trade_date'].dt.strftime('%Y-%m-%d').tolist()
+        return trading_calendar[mask]['trade_date'].dt.strftime('%Y%m%d').tolist()
     except Exception as e:
         print(f"获取交易日历失败: {e}")
         return []
@@ -119,15 +153,9 @@ def run_daily_selection(date):
         try:
             # 添加进度显示，打印当前股票是正在处理的第几只股票，并显示总数
             print(f"{date}  -   正在处理: {stock}，{stocks.index(stock) + 1}/{len(stocks)}")     
-            time.sleep(0.1)  # 增加延时以避免被限制
+            time.sleep(0.5)  # 增加延时以避免被限制
             
-            # 获取基本面数据
-            basic_info = get_stock_basic_info(stock, date)
-            if basic_info is None:
-                print(f"无法获取{stock}的基本面数据")
-                continue
-                
-            market_cap = basic_info.get('total_mv',10000000000)
+            market_cap = market_value(stock, date)
             if market_cap > 3000000000:  # 市值大于30亿
                 print(f"股票{stock}市值{market_cap},过大")
                 continue
@@ -147,7 +175,7 @@ def run_daily_selection(date):
             net_profit = financial.get('net_profit', float('300000000'))
             
             if revenue > 200000000 or net_profit > 3000000:
-                print(f"股票{stock}营收{revenue},净利润{net_profit},过小")
+                print(f"股票{stock}营收{revenue},净利润{net_profit},过大")
                 continue
             
             # 获取交易数据
@@ -212,8 +240,8 @@ def save_results(results):
 
 if __name__ == "__main__":
     # 设置起止日期
-    start_date = '2024-08-05'
-    end_date = '2024-08-05'
+    start_date = '20240805'
+    end_date = '20240805'
     
     print(f"开始回溯选股 - 从 {start_date} 到 {end_date}")
     main(start_date, end_date)
